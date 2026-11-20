@@ -1,0 +1,17 @@
+Makefile
+Makefile.old
+MYMETA.*
+blib/
+pm_to_blib
+xs/TclMT.c
+xs/TkMTGfx.c
+TclMT.c
+TkMTGfx.c
+*.bs
+*.o
+*.obj
+*.bundle
+*.so
+*.dll
+*.dylib
+.DS_Store

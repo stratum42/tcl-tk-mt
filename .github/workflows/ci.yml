@@ -1,0 +1,113 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+
+jobs:
+  macos:
+    name: macOS (arm64 / Metal)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Tcl/Tk, FreeType & HarfBuzz
+        run: brew install tcl-tk freetype harfbuzz pkg-config
+
+      - name: Strict C11 engine compile check (-Wall -Wextra -Werror)
+        run: |
+          for f in c/scene/scene.c c/scene/tessellate.c c/scene/atlas.c \
+                   c/gfx/gfx_registry.c c/gfx/gfx_software.c c/gfx/gfx_vulkan.c; do
+            cc -std=c11 -O2 -Wall -Wextra -Werror -Ic -Ic/scene -Ic/gfx -c "$f" -o /tmp/check.o
+          done
+          rm -f /tmp/check.o
+
+      - name: Configure & Build
+        run: |
+          perl Makefile.PL
+          make -j$(sysctl -n hw.ncpu)
+
+      - name: Run Test Suite (Software & Metal)
+        run: |
+          prove -b -v t/01_tcl_mt_bridge.t t/02_gfx_registry.t t/03_scene_hit_test.t \
+                      t/04_software_render.t t/05_metal_parity.t t/07_tk_dropin.t \
+                      t/08_mt_workers_fibers.t
+
+  linux:
+    name: Linux (Ubuntu x86_64 / X11 + Vulkan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Tcl/Tk, FreeType, HarfBuzz & Xvfb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config \
+            tcl-dev tk-dev libfreetype-dev libharfbuzz-dev \
+            libvulkan1 mesa-vulkan-drivers xvfb
+
+      - name: Strict C11 engine compile check (-Wall -Wextra -Werror)
+        run: |
+          for f in c/scene/scene.c c/scene/tessellate.c c/scene/atlas.c \
+                   c/gfx/gfx_registry.c c/gfx/gfx_software.c c/gfx/gfx_vulkan.c; do
+            gcc -std=c11 -O2 -Wall -Wextra -Werror -Ic -Ic/scene -Ic/gfx -c "$f" -o /tmp/check.o
+          done
+          rm -f /tmp/check.o
+
+      - name: Configure & Build
+        run: |
+          perl Makefile.PL
+          make -j$(nproc)
+
+      - name: Run Test Suite (Xvfb)
+        run: |
+          xvfb-run -a prove -b -v \
+            t/01_tcl_mt_bridge.t t/02_gfx_registry.t t/03_scene_hit_test.t \
+            t/04_software_render.t t/06_vulkan_parity.t t/07_tk_dropin.t \
+            t/08_mt_workers_fibers.t
+
+  windows:
+    name: Windows (Win64 / MSYS2 MinGW-w64)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup MSYS2 (UCRT64 + Tcl/Tk + Perl)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-make
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-perl
+            mingw-w64-ucrt-x86_64-tcl
+            mingw-w64-ucrt-x86_64-tk
+
+      - name: Strict C11 engine compile check (-Wall -Wextra -Werror)
+        run: |
+          for f in c/scene/scene.c c/scene/tessellate.c c/scene/atlas.c \
+                   c/gfx/gfx_registry.c c/gfx/gfx_software.c c/gfx/gfx_vulkan.c; do
+            gcc -std=c11 -O2 -Wall -Wextra -Werror -Ic -Ic/scene -Ic/gfx -c "$f" -o check.o
+          done
+          rm -f check.o
+
+      - name: Configure & Build
+        run: |
+          export TCL_CONFIG="$MINGW_PREFIX/lib/tclConfig.sh"
+          export TK_CONFIG="$MINGW_PREFIX/lib/tkConfig.sh"
+          perl Makefile.PL
+          mingw32-make -j$(nproc)
+
+      - name: Run Test Suite (Headless / Software)
+        env:
+          TCL_TK_MT_ACCEL: software
+        run: |
+          prove -b -v t/01_tcl_mt_bridge.t t/02_gfx_registry.t t/03_scene_hit_test.t \
+                      t/04_software_render.t
