@@ -17,6 +17,55 @@
 
 #include <string.h>
 
+#if defined(__APPLE__) && defined(__LP64__)
+#  include <objc/runtime.h>
+#  include <objc/message.h>
+static double tkmt_cocoa_view_scale(void *nsview) {
+    if (!nsview) return 1.0;
+    id view = (id)nsview;
+    SEL sel_win = sel_registerName("window");
+    id (*msg_id)(id, SEL) = (id (*)(id, SEL))(void (*)(void))objc_msgSend;
+    id win = msg_id(view, sel_win);
+    if (!win) return 1.0;
+    SEL sel_bsf = sel_registerName("backingScaleFactor");
+#  if defined(__x86_64__)
+    double (*msg_dbl)(id, SEL) = (double (*)(id, SEL))(void (*)(void))objc_msgSend_fpret;
+#  else
+    double (*msg_dbl)(id, SEL) = (double (*)(id, SEL))(void (*)(void))objc_msgSend;
+#  endif
+    double bsf = msg_dbl(win, sel_bsf);
+    return (bsf >= 1.0 && bsf <= 8.0) ? bsf : 1.0;
+}
+#endif
+
+static const char *tkmt_surface_platform_name(tkmt_surface_platform_t p) {
+    switch (p) {
+    case TKMT_SURFACE_COCOA: return "cocoa";
+    case TKMT_SURFACE_X11:   return "x11";
+    case TKMT_SURFACE_WIN32: return "win32";
+    case TKMT_SURFACE_NONE:
+    default:                 return "none";
+    }
+}
+
+static tkmt_surface_geometry_fn tkmt_uv_to_geometry_fn(UV addr) {
+    tkmt_surface_geometry_fn fn = NULL;
+    if (addr != 0) {
+        uintptr_t raw = (uintptr_t)addr;
+        memcpy(&fn, &raw, sizeof(fn));
+    }
+    return fn;
+}
+
+static tkmt_surface_detach_fn tkmt_uv_to_detach_fn(UV addr) {
+    tkmt_surface_detach_fn fn = NULL;
+    if (addr != 0) {
+        uintptr_t raw = (uintptr_t)addr;
+        memcpy(&fn, &raw, sizeof(fn));
+    }
+    return fn;
+}
+
 /* -------------------------------------------------------------------------
  * Wrapper structs for Perl-blessed handles
  * ------------------------------------------------------------------------- */
@@ -1401,3 +1450,111 @@ atlas_using_freetype(self)
         RETVAL = tkmt_atlas_using_freetype(tkmt_scene_atlas(ps->scene));
     OUTPUT:
         RETVAL
+
+# =========================================================================
+# Native Tk host surface handle wrappers for external renderers
+# =========================================================================
+
+MODULE = Tcl::Tk::MT::Gfx   PACKAGE = Tcl::Tk::MT::Gfx
+
+PROTOTYPES: DISABLE
+
+UV
+surface_create_raw(interp_ptr, widget_path, width = 320, height = 240)
+        UV interp_ptr
+        const char *widget_path
+        int width
+        int height
+    CODE:
+        if (!interp_ptr) {
+            croak("Tcl::Tk::MT::Gfx::surface_create_raw: null interpreter pointer");
+        }
+        if (!widget_path || !widget_path[0]) {
+            croak("Tcl::Tk::MT::Gfx::surface_create_raw: empty widget path");
+        }
+        tkmt_interp_t *bi = INT2PTR(tkmt_interp_t *, interp_ptr);
+        char errbuf[512];
+        errbuf[0] = '\0';
+        tkmt_surface_t *surf = tkmt_surface_create(bi, widget_path, width, height,
+                                                   errbuf, sizeof(errbuf));
+        if (!surf) {
+            croak("Tcl::Tk::MT::Gfx::surface_create_raw failed: %s",
+                  errbuf[0] ? errbuf : "unknown error");
+        }
+        RETVAL = (UV)(uintptr_t)surf;
+    OUTPUT:
+        RETVAL
+
+void
+surface_destroy_raw(surface_ptr)
+        UV surface_ptr
+    CODE:
+        if (surface_ptr) {
+            tkmt_surface_t *surf = INT2PTR(tkmt_surface_t *, surface_ptr);
+            tkmt_surface_destroy(surf);
+        }
+
+SV *
+surface_native_info(surface_ptr)
+        UV surface_ptr
+    CODE:
+        tkmt_native_surface_t ns;
+        memset(&ns, 0, sizeof(ns));
+        ns.platform = TKMT_SURFACE_NONE;
+        ns.scale    = 1.0f;
+        int realized = 0;
+        if (surface_ptr) {
+            tkmt_surface_t *surf = INT2PTR(tkmt_surface_t *, surface_ptr);
+            realized = tkmt_surface_get_native(surf, &ns);
+        }
+        double scale = (ns.scale > 0.0f) ? (double)ns.scale : 1.0;
+#if defined(__APPLE__) && defined(__LP64__)
+        if (ns.platform == TKMT_SURFACE_COCOA && ns.view != NULL && scale <= 1.0) {
+            scale = tkmt_cocoa_view_scale(ns.view);
+        }
+#endif
+        HV *hv = newHV();
+        (void)hv_stores(hv, "platform",    newSVpv(tkmt_surface_platform_name(ns.platform), 0));
+        (void)hv_stores(hv, "view_ptr",    newSVuv((UV)(uintptr_t)ns.view));
+        (void)hv_stores(hv, "display_ptr", newSVuv((UV)(uintptr_t)ns.display));
+        (void)hv_stores(hv, "window_id",   newSVuv((UV)ns.window));
+        (void)hv_stores(hv, "x",           newSViv((IV)ns.x));
+        (void)hv_stores(hv, "y",           newSViv((IV)ns.y));
+        (void)hv_stores(hv, "width",       newSViv((IV)ns.width));
+        (void)hv_stores(hv, "height",      newSViv((IV)ns.height));
+        (void)hv_stores(hv, "scale",       newSVnv(scale));
+        (void)hv_stores(hv, "visible",     newSViv((IV)(ns.visible ? 1 : 0)));
+        (void)hv_stores(hv, "surface_ptr", newSVuv(surface_ptr));
+        (void)hv_stores(hv, "realized",    newSViv((IV)(realized ? 1 : 0)));
+        RETVAL = newRV_noinc((SV *)hv);
+    OUTPUT:
+        RETVAL
+
+int
+surface_set_ext_geometry_cb(surface_ptr, ud_ptr = 0, on_geom_fn_ptr = 0, on_detach_fn_ptr = 0)
+        UV surface_ptr
+        UV ud_ptr
+        UV on_geom_fn_ptr
+        UV on_detach_fn_ptr
+    CODE:
+        if (!surface_ptr) {
+            RETVAL = 0;
+        } else {
+            tkmt_surface_t *surf = INT2PTR(tkmt_surface_t *, surface_ptr);
+            void *ud = (ud_ptr != 0) ? INT2PTR(void *, ud_ptr) : NULL;
+            tkmt_surface_geometry_fn on_geom   = tkmt_uv_to_geometry_fn(on_geom_fn_ptr);
+            tkmt_surface_detach_fn   on_detach = tkmt_uv_to_detach_fn(on_detach_fn_ptr);
+            tkmt_surface_set_geometry_cb(surf, ud, on_geom, on_detach);
+            RETVAL = 1;
+        }
+    OUTPUT:
+        RETVAL
+
+void
+surface_request_redraw(surface_ptr)
+        UV surface_ptr
+    CODE:
+        if (surface_ptr) {
+            tkmt_surface_t *surf = INT2PTR(tkmt_surface_t *, surface_ptr);
+            tkmt_surface_request_redraw(surf);
+        }

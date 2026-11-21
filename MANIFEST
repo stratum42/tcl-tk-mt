@@ -29,6 +29,7 @@ lib/Tcl/Tk/MT/Dispatch.pm
 lib/Tcl/Tk/MT/Gfx.pm
 lib/Tcl/Tk/MT/Photo.pm
 lib/Tcl/Tk/MT/Shim.pm
+lib/Tcl/Tk/MT/Surface.pm
 t/01_tcl_mt_bridge.t
 t/02_gfx_registry.t
 t/03_scene_hit_test.t
@@ -38,6 +39,7 @@ t/06_vulkan_parity.t
 t/07_tk_dropin.t
 t/08_mt_workers_fibers.t
 t/09_upstream_compat.t
+t/10_surface.t
 xs/TclMT.xs
 xs/TkMTGfx.xs
 xs/mt_compat.h

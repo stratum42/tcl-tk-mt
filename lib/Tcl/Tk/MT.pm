@@ -986,6 +986,12 @@ sub Photo {
     return Tcl::Tk::MT::Photo->new($self->{interp}, @args);
 }
 
+sub Surface {
+    my ($self, @args) = @_;
+    require Tcl::Tk::MT::Surface;
+    return Tcl::Tk::MT::Surface->new($self, @args);
+}
+
 sub configure {
     my ($self, @args) = @_;
     my @rest;
@@ -1375,6 +1381,9 @@ to C<Tcl::Tk::MT::NativeCanvas>.
 
 C<< $widget->Photo(...) >> constructs a L<Tcl::Tk::MT::Photo> bound to the
 widget's interpreter.
+
+C<< $widget->Surface(...) >> constructs a L<Tcl::Tk::MT::Surface> host frame
+exposing the platform native window handle for external renderers.
 
 =head1 LIMITATIONS
 
